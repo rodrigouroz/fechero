@@ -40,6 +40,7 @@ const TEMPORAL_LEXICON = [
   "pasado",
   "proximo",
   "finde",
+  "antes",
   "despues",
   "excepto",
   "todos",

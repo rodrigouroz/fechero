@@ -3,7 +3,7 @@ export type ParseMode = "strict" | "tolerant";
 export type ParseContext = {
   referenceDateTime: string;
   timezone: string;
-  locale?: "es-AR";
+  locale?: string;
   mode?: ParseMode;
 };
 
@@ -32,6 +32,12 @@ export type TimeRange = {
   precision: "coarse" | "exact" | "approximate";
 };
 
+export type SourceSpan = {
+  text: string;
+  start: number;
+  end: number;
+};
+
 export type TemporalCandidate = {
   kind: "date" | "datetime" | "date_range" | "availability_filter" | "recurrence";
   confidence: number;
@@ -39,9 +45,11 @@ export type TemporalCandidate = {
   dateFrom?: string;
   dateTo?: string;
   exactStartTime?: string;
+  isApproximate?: boolean;
   timeRange?: TimeRange;
   allowedWeekdays?: number[];
   excludedWeekdays?: number[];
+  sourceSpans?: SourceSpan[];
   recurrence?: {
     frequency: "daily" | "weekly" | "monthly";
     interval: number;
@@ -66,12 +74,22 @@ export type NormalizedInput = {
 
 export type DateExpression =
   | { kind: "relative_day"; offsetDays: number }
+  | { kind: "absolute_date"; day: number; month: number; year?: number; weekday?: number }
+  | { kind: "current_week" }
   | { kind: "next_week" }
+  | { kind: "week_after_next" }
   | { kind: "weekend" }
   | { kind: "weekday"; weekday: number }
+  | { kind: "this_weekday"; weekday: number }
+  | { kind: "next_week_weekday"; weekday: number }
   | { kind: "ambiguous_next_weekday"; weekday: number };
 
 export type TimeExpression =
+  | {
+      kind: "exact_time";
+      value: string;
+      isApproximate: boolean;
+    }
   | {
       kind: "time_range";
       from: string;
@@ -83,6 +101,7 @@ export type TimeExpression =
 export type ParsedTemporalExpression = {
   date?: DateExpression;
   time?: TimeExpression;
+  sourceSpans: SourceSpan[];
   recurrence?: {
     frequency: "daily" | "weekly" | "monthly";
     interval: number;
