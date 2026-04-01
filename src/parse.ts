@@ -12,7 +12,11 @@ function deriveWarnings(input: {
 }) {
   const warnings = [...input.result.warnings];
   const absoluteDate =
-    input.expression.date?.kind === "absolute_date" ? input.expression.date : undefined;
+    input.expression.date?.kind === "absolute_date"
+      ? input.expression.date
+      : input.expression.recurrenceStart?.kind === "absolute_date"
+        ? input.expression.recurrenceStart
+        : undefined;
   const firstCandidate = input.result.candidates[0];
 
   if (absoluteDate?.weekday && firstCandidate?.exactDate) {
@@ -20,7 +24,7 @@ function deriveWarnings(input: {
     if (actualWeekday !== absoluteDate.weekday) {
       warnings.push({
         code: "WEEKDAY_DATE_MISMATCH",
-        message: "The weekday does not match the absolute date.",
+        message: "El día de la semana no coincide con la fecha absoluta.",
       });
     }
   }

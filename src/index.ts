@@ -8,10 +8,15 @@ export {
 } from "./scheduling-helpers";
 export type {
   Correction,
+  DateRangeSource,
+  ExactDateSource,
+  ExactStartTimeSource,
   ParseContext,
   ParseError,
   ParseResult,
   ParseWarning,
+  RecurrenceRule,
+  SelectionHints,
   SourceSpan,
   TemporalCandidate,
   TimeRange,

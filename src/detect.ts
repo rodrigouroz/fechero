@@ -1,4 +1,11 @@
-import type { Correction, DateExpression, ParsedTemporalExpression, SourceSpan, TimeExpression } from "./types";
+import type {
+  Correction,
+  DateExpression,
+  ParsedTemporalExpression,
+  RecurrenceRule,
+  SourceSpan,
+  TimeExpression,
+} from "./types";
 
 const WEEKDAY_BY_NAME: Record<string, number> = {
   domingo: 7,
@@ -29,6 +36,23 @@ const MONTH_BY_NAME: Record<string, number> = {
 };
 
 const WEEKDAY_PATTERN = "(domingo|lunes|martes|miercoles|jueves|viernes|sabado)";
+const MONTH_PATTERN =
+  "(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)";
+
+type DateDetection = {
+  date?: DateExpression;
+  spans: SourceSpan[];
+};
+
+type TimeDetection = {
+  time?: TimeExpression;
+  spans: SourceSpan[];
+};
+
+type RecurrenceDetection = {
+  recurrence?: RecurrenceRule;
+  spans: SourceSpan[];
+};
 
 function parseHour(hourText: string, minuteText = "00", options?: { inferAfternoon?: boolean }) {
   let hour = Number.parseInt(hourText, 10);
@@ -38,7 +62,14 @@ function parseHour(hourText: string, minuteText = "00", options?: { inferAfterno
 
   const minutes = Number.parseInt(minuteText, 10);
 
-  if (Number.isNaN(hour) || Number.isNaN(minutes) || hour < 0 || hour > 23 || minutes < 0 || minutes > 59) {
+  if (
+    Number.isNaN(hour) ||
+    Number.isNaN(minutes) ||
+    hour < 0 ||
+    hour > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
     return undefined;
   }
 
@@ -55,108 +86,255 @@ function toSourceSpan(normalizedText: string, match: RegExpMatchArray): SourceSp
   };
 }
 
+function toCapturedSourceSpan(
+  normalizedText: string,
+  match: RegExpMatchArray,
+  capturedText: string
+): SourceSpan {
+  const fullStart = match.index ?? normalizedText.indexOf(match[0]);
+  const offset = match[0].indexOf(capturedText);
+  const start = fullStart + Math.max(offset, 0);
+
+  return {
+    text: capturedText,
+    start,
+    end: start + capturedText.length,
+  };
+}
+
+function offsetSpans(spans: SourceSpan[], offset: number): SourceSpan[] {
+  return spans.map((span) => ({
+    ...span,
+    start: span.start + offset,
+    end: span.end + offset,
+  }));
+}
+
+function uniqueSpans(spans: SourceSpan[]): SourceSpan[] {
+  const seen = new Set<string>();
+
+  return [...spans]
+    .sort((left, right) => left.start - right.start || left.end - right.end)
+    .filter((span) => {
+      const key = `${span.start}:${span.end}:${span.text}`;
+      if (seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    });
+}
+
 function detectDateExpression(
   normalizedText: string,
   corrections: Correction[]
-): DateExpression | undefined {
+): DateDetection {
   const absoluteDateMatch = normalizedText.match(
-    new RegExp(`(?:\\b${WEEKDAY_PATTERN}\\b\\s+)?(\\d{1,2}) de (enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)(?: de (\\d{4}))?`, "u")
+    new RegExp(
+      `(?:\\b(?:el|la)\\s+)?(?<core>(?:(?<weekday>${WEEKDAY_PATTERN})\\s+)?(?<day>\\d{1,2}) de (?<month>${MONTH_PATTERN})(?: de (?<year>\\d{4}))?)`,
+      "u"
+    )
   );
-  if (absoluteDateMatch) {
+  if (absoluteDateMatch?.groups) {
     return {
-      kind: "absolute_date",
-      day: Number.parseInt(absoluteDateMatch[2], 10),
-      month: MONTH_BY_NAME[absoluteDateMatch[3]] ?? 1,
-      year: absoluteDateMatch[4] ? Number.parseInt(absoluteDateMatch[4], 10) : undefined,
-      weekday: absoluteDateMatch[1] ? WEEKDAY_BY_NAME[absoluteDateMatch[1]] : undefined,
+      date: {
+        kind: "absolute_date",
+        day: Number.parseInt(absoluteDateMatch.groups.day, 10),
+        month: MONTH_BY_NAME[absoluteDateMatch.groups.month] ?? 1,
+        year: absoluteDateMatch.groups.year
+          ? Number.parseInt(absoluteDateMatch.groups.year, 10)
+          : undefined,
+        weekday: absoluteDateMatch.groups.weekday
+          ? WEEKDAY_BY_NAME[absoluteDateMatch.groups.weekday]
+          : undefined,
+      },
+      spans: [
+        toCapturedSourceSpan(
+          normalizedText,
+          absoluteDateMatch,
+          absoluteDateMatch.groups.core
+        ),
+      ],
     };
   }
 
-  if (/\bfinde\b/.test(normalizedText)) {
-    return { kind: "weekend" };
+  const weekdayDayMatch = normalizedText.match(
+    new RegExp(
+      `(?:\\b(?:el|la)\\s+)?(?<core>(?<weekday>${WEEKDAY_PATTERN})\\s+(?<day>\\d{1,2}))\\b`,
+      "u"
+    )
+  );
+  if (weekdayDayMatch?.groups) {
+    return {
+      date: {
+        kind: "day_of_month",
+        day: Number.parseInt(weekdayDayMatch.groups.day, 10),
+        weekday: WEEKDAY_BY_NAME[weekdayDayMatch.groups.weekday] ?? 1,
+      },
+      spans: [
+        toCapturedSourceSpan(
+          normalizedText,
+          weekdayDayMatch,
+          weekdayDayMatch.groups.core
+        ),
+      ],
+    };
   }
 
-  if (/\besta semana\b/.test(normalizedText)) {
-    return { kind: "current_week" };
+  const weekendMatch = normalizedText.match(/\bfinde\b/u);
+  if (weekendMatch) {
+    return {
+      date: { kind: "weekend" },
+      spans: [toSourceSpan(normalizedText, weekendMatch)],
+    };
   }
 
-  if (/\bla otra semana\b/.test(normalizedText)) {
-    return { kind: "week_after_next" };
+  const currentWeekMatch = normalizedText.match(/\besta semana\b/u);
+  if (currentWeekMatch) {
+    return {
+      date: { kind: "current_week" },
+      spans: [toSourceSpan(normalizedText, currentWeekMatch)],
+    };
   }
 
+  const weekAfterNextMatch = normalizedText.match(/\bla otra semana\b/u);
+  if (weekAfterNextMatch) {
+    return {
+      date: { kind: "week_after_next" },
+      spans: [toSourceSpan(normalizedText, weekAfterNextMatch)],
+    };
+  }
+
+  const nextWeekMatch = normalizedText.match(
+    /\b(?<core>la semana que viene|la proxima semana|la proximo semana|la semana proxima|la semana proximo)\b/u
+  );
+  if (nextWeekMatch?.groups?.core) {
+    return {
+      date: { kind: "next_week" },
+      spans: [toCapturedSourceSpan(normalizedText, nextWeekMatch, nextWeekMatch.groups.core)],
+    };
+  }
+
+  const pastTomorrowMatch = normalizedText.match(/\bpasado manana\b/u);
+  if (pastTomorrowMatch) {
+    return {
+      date: { kind: "relative_day", offsetDays: 2 },
+      spans: [toSourceSpan(normalizedText, pastTomorrowMatch)],
+    };
+  }
+
+  const todayMatch = normalizedText.match(/\bhoy\b/u);
+  if (todayMatch) {
+    return {
+      date: { kind: "relative_day", offsetDays: 0 },
+      spans: [toSourceSpan(normalizedText, todayMatch)],
+    };
+  }
+
+  const tomorrowMatch = normalizedText.match(/\bmanana\b/u);
   if (
-    normalizedText.includes("la semana que viene") ||
-    normalizedText.includes("la proxima semana") ||
-    normalizedText.includes("la proximo semana") ||
-    normalizedText.includes("la semana proxima") ||
-    normalizedText.includes("la semana proximo")
+    tomorrowMatch &&
+    !/\ba la manana\b/u.test(normalizedText) &&
+    !/\bpor la manana\b/u.test(normalizedText)
   ) {
-    return { kind: "next_week" };
-  }
-
-  if (/\bpasado manana\b/.test(normalizedText)) {
-    return { kind: "relative_day", offsetDays: 2 };
-  }
-
-  if (/\bhoy\b/.test(normalizedText)) {
-    return { kind: "relative_day", offsetDays: 0 };
-  }
-
-  if (/\bmanana\b/.test(normalizedText) && !/\ba la manana\b/.test(normalizedText)) {
-    return { kind: "relative_day", offsetDays: 1 };
+    return {
+      date: { kind: "relative_day", offsetDays: 1 },
+      spans: [toSourceSpan(normalizedText, tomorrowMatch)],
+    };
   }
 
   const nextWeekWeekdayMatch = normalizedText.match(
-    new RegExp(`\\b(?:el\\s+)?${WEEKDAY_PATTERN} que viene\\b|\\b(?:el\\s+)?${WEEKDAY_PATTERN} proximo\\b`, "u")
+    new RegExp(
+      `(?:\\b(?:el|la)\\s+)?(?<core>(?:(?<weekdayA>${WEEKDAY_PATTERN}) que viene|(?<weekdayB>${WEEKDAY_PATTERN}) proximo))\\b`,
+      "u"
+    )
   );
-  if (nextWeekWeekdayMatch) {
-    const weekdayName = nextWeekWeekdayMatch[1] ?? nextWeekWeekdayMatch[2];
+  if (nextWeekWeekdayMatch?.groups) {
+    const weekdayName =
+      nextWeekWeekdayMatch.groups.weekdayA ?? nextWeekWeekdayMatch.groups.weekdayB;
     return {
-      kind: "next_week_weekday",
-      weekday: WEEKDAY_BY_NAME[weekdayName] ?? 1,
+      date: {
+        kind: "next_week_weekday",
+        weekday: WEEKDAY_BY_NAME[weekdayName] ?? 1,
+      },
+      spans: [
+        toCapturedSourceSpan(
+          normalizedText,
+          nextWeekWeekdayMatch,
+          nextWeekWeekdayMatch.groups.core
+        ),
+      ],
     };
   }
 
-  const thisWeekdayMatch = normalizedText.match(new RegExp(`\\beste ${WEEKDAY_PATTERN}\\b`, "u"));
-  if (thisWeekdayMatch) {
+  const thisWeekdayMatch = normalizedText.match(
+    new RegExp(`\\b(?:el\\s+)?(?<core>este (?<weekday>${WEEKDAY_PATTERN}))\\b`, "u")
+  );
+  if (thisWeekdayMatch?.groups) {
     return {
-      kind: "this_weekday",
-      weekday: WEEKDAY_BY_NAME[thisWeekdayMatch[1]] ?? 1,
+      date: {
+        kind: "this_weekday",
+        weekday: WEEKDAY_BY_NAME[thisWeekdayMatch.groups.weekday] ?? 1,
+      },
+      spans: [
+        toCapturedSourceSpan(
+          normalizedText,
+          thisWeekdayMatch,
+          thisWeekdayMatch.groups.core
+        ),
+      ],
     };
   }
 
-  const ambiguousNextWeekdayMatch = normalizedText.match(/\bproximo (lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b/);
-  if (ambiguousNextWeekdayMatch) {
+  const ambiguousNextWeekdayMatch = normalizedText.match(
+    /\b(?<core>proximo (?<weekday>lunes|martes|miercoles|jueves|viernes|sabado|domingo))\b/u
+  );
+  if (ambiguousNextWeekdayMatch?.groups) {
     const hasAbbreviatedImmediateHint = corrections.some(
       (correction) => correction.reason === "abbreviation" && correction.to === "proximo"
     );
 
-    if (hasAbbreviatedImmediateHint) {
-      return {
+    return {
+      date: hasAbbreviatedImmediateHint
+        ? {
+            kind: "weekday",
+            weekday: WEEKDAY_BY_NAME[ambiguousNextWeekdayMatch.groups.weekday] ?? 1,
+          }
+        : {
+            kind: "ambiguous_next_weekday",
+            weekday: WEEKDAY_BY_NAME[ambiguousNextWeekdayMatch.groups.weekday] ?? 1,
+          },
+      spans: [
+        toCapturedSourceSpan(
+          normalizedText,
+          ambiguousNextWeekdayMatch,
+          ambiguousNextWeekdayMatch.groups.core
+        ),
+      ],
+    };
+  }
+
+  const weekdayMatch = normalizedText.match(
+    /\b(?<weekday>lunes|martes|miercoles|jueves|viernes|sabado|sabados|domingo|domingos)\b/u
+  );
+  if (weekdayMatch?.groups?.weekday) {
+    return {
+      date: {
         kind: "weekday",
-        weekday: WEEKDAY_BY_NAME[ambiguousNextWeekdayMatch[1]] ?? 1,
-      };
-    }
-
-    return {
-      kind: "ambiguous_next_weekday",
-      weekday: WEEKDAY_BY_NAME[ambiguousNextWeekdayMatch[1]] ?? 0,
+        weekday: WEEKDAY_BY_NAME[weekdayMatch.groups.weekday] ?? 1,
+      },
+      spans: [toCapturedSourceSpan(normalizedText, weekdayMatch, weekdayMatch.groups.weekday)],
     };
   }
 
-  const weekdayMatch = normalizedText.match(/\b(lunes|martes|miercoles|jueves|viernes|sabado|sabados|domingo|domingos)\b/);
-  if (weekdayMatch) {
-    return {
-      kind: "weekday",
-      weekday: WEEKDAY_BY_NAME[weekdayMatch[1]] ?? 0,
-    };
-  }
-
-  return undefined;
+  return { spans: [] };
 }
 
-function detectTimeExpression(normalizedText: string): { time?: TimeExpression; spans: SourceSpan[] } {
-  const betweenMatch = normalizedText.match(/\bentre (\d{1,2})(?::(\d{2}))? y (\d{1,2})(?::(\d{2}))?\b/);
+function detectTimeExpression(normalizedText: string): TimeDetection {
+  const betweenMatch = normalizedText.match(
+    /\bentre (\d{1,2})(?::(\d{2}))? y (\d{1,2})(?::(\d{2}))?\b/u
+  );
   if (betweenMatch) {
     const from = parseHour(betweenMatch[1], betweenMatch[2] ?? "00");
     const to = parseHour(betweenMatch[3], betweenMatch[4] ?? "00");
@@ -175,7 +353,7 @@ function detectTimeExpression(normalizedText: string): { time?: TimeExpression; 
     }
   }
 
-  const beforeHourMatch = normalizedText.match(/\bantes de las (\d{1,2})(?::(\d{2}))?\b/);
+  const beforeHourMatch = normalizedText.match(/\bantes de las (\d{1,2})(?::(\d{2}))?\b/u);
   if (beforeHourMatch) {
     const to = parseHour(beforeHourMatch[1], beforeHourMatch[2] ?? "00");
 
@@ -193,7 +371,7 @@ function detectTimeExpression(normalizedText: string): { time?: TimeExpression; 
     }
   }
 
-  const afterHourMatch = normalizedText.match(/\bdespues de las (\d{1,2})(?::(\d{2}))?\b/);
+  const afterHourMatch = normalizedText.match(/\bdespues de las (\d{1,2})(?::(\d{2}))?\b/u);
   if (afterHourMatch) {
     const from = parseHour(afterHourMatch[1], afterHourMatch[2] ?? "00");
 
@@ -211,7 +389,8 @@ function detectTimeExpression(normalizedText: string): { time?: TimeExpression; 
     }
   }
 
-  if (/\ba la manana\b/.test(normalizedText)) {
+  const morningMatch = normalizedText.match(/\b(a la manana|por la manana)\b/u);
+  if (morningMatch) {
     return {
       time: {
         kind: "time_range",
@@ -220,15 +399,12 @@ function detectTimeExpression(normalizedText: string): { time?: TimeExpression; 
         label: "manana",
         precision: "coarse",
       },
-      spans: [{
-        text: "a la manana",
-        start: normalizedText.indexOf("a la manana"),
-        end: normalizedText.indexOf("a la manana") + "a la manana".length,
-      }],
+      spans: [toSourceSpan(normalizedText, morningMatch)],
     };
   }
 
-  if (/\ba la tarde\b/.test(normalizedText)) {
+  const afternoonMatch = normalizedText.match(/\b(a la tarde|por la tarde)\b/u);
+  if (afternoonMatch) {
     return {
       time: {
         kind: "time_range",
@@ -237,15 +413,11 @@ function detectTimeExpression(normalizedText: string): { time?: TimeExpression; 
         label: "tarde",
         precision: "coarse",
       },
-      spans: [{
-        text: "a la tarde",
-        start: normalizedText.indexOf("a la tarde"),
-        end: normalizedText.indexOf("a la tarde") + "a la tarde".length,
-      }],
+      spans: [toSourceSpan(normalizedText, afternoonMatch)],
     };
   }
 
-  const exactWithMinutesMatch = normalizedText.match(/\b(?:a las\s+)?(\d{1,2}):(\d{2})\b/);
+  const exactWithMinutesMatch = normalizedText.match(/\b(?:a las\s+)?(\d{1,2}):(\d{2})\b/u);
   if (exactWithMinutesMatch) {
     const value = parseHour(exactWithMinutesMatch[1], exactWithMinutesMatch[2]);
 
@@ -261,7 +433,7 @@ function detectTimeExpression(normalizedText: string): { time?: TimeExpression; 
     }
   }
 
-  const exactHourMatch = normalizedText.match(/\ba las (\d{1,2})\b/);
+  const exactHourMatch = normalizedText.match(/\ba las (\d{1,2})\b/u);
   if (exactHourMatch) {
     const value = parseHour(exactHourMatch[1]);
     if (value) {
@@ -276,9 +448,11 @@ function detectTimeExpression(normalizedText: string): { time?: TimeExpression; 
     }
   }
 
-  const tipoHourMatch = normalizedText.match(/\btipo (\d{1,2})(?::(\d{2}))?\b/);
+  const tipoHourMatch = normalizedText.match(/\btipo (\d{1,2})(?::(\d{2}))?\b/u);
   if (tipoHourMatch) {
-    const value = parseHour(tipoHourMatch[1], tipoHourMatch[2] ?? "00", { inferAfternoon: true });
+    const value = parseHour(tipoHourMatch[1], tipoHourMatch[2] ?? "00", {
+      inferAfternoon: true,
+    });
     if (value) {
       return {
         time: {
@@ -294,30 +468,83 @@ function detectTimeExpression(normalizedText: string): { time?: TimeExpression; 
   return { spans: [] };
 }
 
-function detectRecurrenceExpression(normalizedText: string) {
-  const weeklyMatch = normalizedText.match(/\btodos los (lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b/);
-  if (!weeklyMatch) {
-    return undefined;
+function detectRecurrenceExpression(normalizedText: string): RecurrenceDetection {
+  const weeklyMatch = normalizedText.match(
+    /\b(?<core>todos los (lunes|martes|miercoles|jueves|viernes|sabado|domingo))\b/u
+  );
+  if (!weeklyMatch?.groups?.core) {
+    return { spans: [] };
   }
 
+  const weekdayName = weeklyMatch[2];
+
   return {
-    frequency: "weekly" as const,
-    interval: 1,
-    weekdays: [WEEKDAY_BY_NAME[weeklyMatch[1]] ?? 1],
+    recurrence: {
+      frequency: "weekly",
+      interval: 1,
+      weekdays: [WEEKDAY_BY_NAME[weekdayName] ?? 1],
+    },
+    spans: [toCapturedSourceSpan(normalizedText, weeklyMatch, weeklyMatch.groups.core)],
   };
+}
+
+function detectRecurrenceStartExpression(
+  normalizedText: string,
+  corrections: Correction[]
+): DateDetection {
+  const anchorPatterns = [
+    /\b(?:empezando|desde|arrancando)\s+(?<tail>.+)$/u,
+    /\ba partir de(?:l| la)?\s+(?<tail>.+)$/u,
+  ];
+
+  for (const pattern of anchorPatterns) {
+    const anchorMatch = normalizedText.match(pattern);
+    const rawTail = anchorMatch?.groups?.tail;
+    if (!anchorMatch || !rawTail) {
+      continue;
+    }
+
+    const detection = detectDateExpression(rawTail, corrections);
+    if (!detection.date) {
+      continue;
+    }
+
+    const fullStart = anchorMatch.index ?? normalizedText.indexOf(anchorMatch[0]);
+    const tailStart = fullStart + anchorMatch[0].length - rawTail.length;
+
+    return {
+      date: detection.date,
+      spans: offsetSpans(detection.spans, tailStart),
+    };
+  }
+
+  return { spans: [] };
 }
 
 export function detectTemporalExpression(
   normalizedText: string,
   corrections: Correction[] = []
 ): ParsedTemporalExpression {
+  const recurrenceDetection = detectRecurrenceExpression(normalizedText);
   const detectedTime = detectTimeExpression(normalizedText);
+  const recurrenceStartDetection = recurrenceDetection.recurrence
+    ? detectRecurrenceStartExpression(normalizedText, corrections)
+    : { spans: [] };
+  const detectedDate = recurrenceDetection.recurrence
+    ? { spans: [] }
+    : detectDateExpression(normalizedText, corrections);
 
   return {
-    sourceSpans: detectedTime.spans,
-    recurrence: detectRecurrenceExpression(normalizedText),
-    date: detectDateExpression(normalizedText, corrections),
+    sourceSpans: uniqueSpans([
+      ...recurrenceDetection.spans,
+      ...detectedDate.spans,
+      ...recurrenceStartDetection.spans,
+      ...detectedTime.spans,
+    ]),
+    recurrence: recurrenceDetection.recurrence,
+    recurrenceStart: recurrenceStartDetection.date,
+    date: detectedDate.date,
     time: detectedTime.time,
-    negative: /\bno puedo\b|\bexcepto\b|\bmenos\b/.test(normalizedText),
+    negative: /\bno puedo\b|\bexcepto\b|\bmenos\b|\bsalvo\b/u.test(normalizedText),
   };
 }

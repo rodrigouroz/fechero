@@ -193,6 +193,13 @@ describe("parseSpanishDate", () => {
       expect.objectContaining({
         kind: "date",
         exactDate: "2026-04-09",
+        sourceSpans: [
+          {
+            text: "9 de abril",
+            start: 0,
+            end: 10,
+          },
+        ],
       }),
     ]);
   });
@@ -205,6 +212,13 @@ describe("parseSpanishDate", () => {
       expect.objectContaining({
         kind: "date",
         exactDate: "2026-04-09",
+        sourceSpans: [
+          {
+            text: "jueves 9 de abril",
+            start: 0,
+            end: 17,
+          },
+        ],
       }),
     ]);
   });
@@ -229,6 +243,13 @@ describe("parseSpanishDate", () => {
       expect.objectContaining({
         kind: "date",
         exactDate: "2026-04-07",
+        sourceSpans: [
+          {
+            text: "martes que viene",
+            start: 3,
+            end: 19,
+          },
+        ],
       }),
     ]);
   });
@@ -241,6 +262,13 @@ describe("parseSpanishDate", () => {
       expect.objectContaining({
         kind: "date",
         exactDate: "2026-04-07",
+        sourceSpans: [
+          {
+            text: "martes que viene",
+            start: 0,
+            end: 16,
+          },
+        ],
       }),
     ]);
   });
@@ -307,6 +335,125 @@ describe("parseSpanishDate", () => {
     ]);
   });
 
+  it("parses recurrence with an absolute start anchor in the same phrase", () => {
+    const result = parseSpanishDate(
+      "todos los martes a las 17, empezando el martes 7 de abril",
+      context
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        kind: "recurrence",
+        recurrence: {
+          frequency: "weekly",
+          interval: 1,
+          weekdays: [2],
+        },
+        exactStartTime: "17:00",
+        isApproximate: false,
+        exactDate: "2026-04-07",
+        sourceSpans: expect.arrayContaining([
+          expect.objectContaining({ text: "todos los martes" }),
+          expect.objectContaining({ text: "a las 17" }),
+          expect.objectContaining({ text: "martes 7 de abril" }),
+        ]),
+      }),
+    ]);
+  });
+
+  it("parses recurrence with a relative weekday start anchor", () => {
+    const result = parseSpanishDate("todos los martes a las 17 desde el martes que viene", context);
+
+    expect(result.errors).toEqual([]);
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        kind: "recurrence",
+        recurrence: {
+          frequency: "weekly",
+          interval: 1,
+          weekdays: [2],
+        },
+        exactStartTime: "17:00",
+        isApproximate: false,
+        exactDate: "2026-04-07",
+        sourceSpans: expect.arrayContaining([
+          expect.objectContaining({ text: "todos los martes" }),
+          expect.objectContaining({ text: "a las 17" }),
+          expect.objectContaining({ text: "martes que viene" }),
+        ]),
+      }),
+    ]);
+  });
+
+  it("parses recurrence with a weekly range start anchor", () => {
+    const result = parseSpanishDate(
+      "todos los martes a las 17, empezando la semana que viene",
+      context
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        kind: "recurrence",
+        recurrence: {
+          frequency: "weekly",
+          interval: 1,
+          weekdays: [2],
+        },
+        exactStartTime: "17:00",
+        isApproximate: false,
+        dateFrom: "2026-04-06",
+        dateTo: "2026-04-12",
+        sourceSpans: expect.arrayContaining([
+          expect.objectContaining({ text: "todos los martes" }),
+          expect.objectContaining({ text: "a las 17" }),
+          expect.objectContaining({ text: "la semana que viene" }),
+        ]),
+      }),
+    ]);
+  });
+
+  it("parses absolute weekday dates plus an exact time", () => {
+    const result = parseSpanishDate("el lunes 6 de abril a las 10", context);
+
+    expect(result.errors).toEqual([]);
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        kind: "datetime",
+        exactDate: "2026-04-06",
+        exactStartTime: "10:00",
+        isApproximate: false,
+        sourceSpans: expect.arrayContaining([
+          expect.objectContaining({
+            text: "lunes 6 de abril",
+            start: 3,
+            end: 19,
+          }),
+          expect.objectContaining({ text: "a las 10" }),
+        ]),
+      }),
+    ]);
+  });
+
+  it("finds temporal content even with conversational noise around it", () => {
+    const result = parseSpanishDate("con Juan el lunes 6 a las 10", context);
+
+    expect(result.errors).toEqual([]);
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        kind: "datetime",
+        exactDate: "2026-04-06",
+        exactStartTime: "10:00",
+        isApproximate: false,
+        sourceSpans: expect.arrayContaining([
+          expect.objectContaining({ text: "lunes 6" }),
+          expect.objectContaining({ text: "a las 10" }),
+        ]),
+      }),
+    ]);
+  });
+
   it("parses negative availability constraints", () => {
     const result = parseSpanishDate("los martes a la mañana no puedo", context);
 
@@ -333,6 +480,18 @@ describe("parseSpanishDate", () => {
       expect.objectContaining({
         kind: "availability_filter",
         excludedWeekdays: [2],
+      }),
+    ]);
+  });
+
+  it("treats salvo as a negative exclusion marker", () => {
+    const result = parseSpanishDate("todos los dias salvo los jueves", context);
+
+    expect(result.errors).toEqual([]);
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        kind: "availability_filter",
+        excludedWeekdays: [4],
       }),
     ]);
   });
@@ -415,6 +574,33 @@ describe("parseSpanishDate", () => {
     ]);
   });
 
+  it("parses week ranges combined with por la tarde", () => {
+    const result = parseSpanishDate("la semana que viene por la tarde", context);
+
+    expect(result.errors).toEqual([]);
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        kind: "availability_filter",
+        dateFrom: "2026-04-06",
+        dateTo: "2026-04-12",
+        timeRange: {
+          from: "13:00",
+          to: "19:00",
+          label: "tarde",
+          precision: "coarse",
+        },
+        sourceSpans: expect.arrayContaining([
+          expect.objectContaining({
+            text: "la semana que viene",
+            start: 0,
+            end: 19,
+          }),
+          expect.objectContaining({ text: "por la tarde" }),
+        ]),
+      }),
+    ]);
+  });
+
   it("parses open-ended upper bounds like antes de las 18", () => {
     const result = parseSpanishDate("mañana antes de las 18", context);
 
@@ -440,7 +626,7 @@ describe("parseSpanishDate", () => {
     expect(result.warnings).toEqual([
       {
         code: "WEEKDAY_DATE_MISMATCH",
-        message: "The weekday does not match the absolute date.",
+        message: "El día de la semana no coincide con la fecha absoluta.",
       },
     ]);
     expect(result.candidates).toEqual([
