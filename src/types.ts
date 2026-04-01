@@ -1,0 +1,92 @@
+export type ParseMode = "strict" | "tolerant";
+
+export type ParseContext = {
+  referenceDateTime: string;
+  timezone: string;
+  locale?: "es-AR";
+  mode?: ParseMode;
+};
+
+export type CorrectionReason = "abbreviation" | "typo";
+
+export type Correction = {
+  from: string;
+  to: string;
+  reason: CorrectionReason;
+};
+
+export type ParseWarning = {
+  code: string;
+  message: string;
+};
+
+export type ParseError = {
+  code: string;
+  message: string;
+};
+
+export type TimeRange = {
+  from: string;
+  to: string;
+  label: string;
+  precision: "coarse" | "exact" | "approximate";
+};
+
+export type TemporalCandidate = {
+  kind: "date" | "datetime" | "date_range" | "availability_filter" | "recurrence";
+  confidence: number;
+  exactDate?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  exactStartTime?: string;
+  timeRange?: TimeRange;
+  allowedWeekdays?: number[];
+  excludedWeekdays?: number[];
+  recurrence?: {
+    frequency: "daily" | "weekly" | "monthly";
+    interval: number;
+    weekdays?: number[];
+  };
+  ambiguityReason?: string;
+};
+
+export type ParseResult = {
+  normalizedText: string;
+  corrections: Correction[];
+  candidates: TemporalCandidate[];
+  warnings: ParseWarning[];
+  errors: ParseError[];
+};
+
+export type NormalizedInput = {
+  originalText: string;
+  normalizedText: string;
+  corrections: Correction[];
+};
+
+export type DateExpression =
+  | { kind: "relative_day"; offsetDays: number }
+  | { kind: "next_week" }
+  | { kind: "weekend" }
+  | { kind: "weekday"; weekday: number }
+  | { kind: "ambiguous_next_weekday"; weekday: number };
+
+export type TimeExpression =
+  | {
+      kind: "time_range";
+      from: string;
+      to: string;
+      label: string;
+      precision: "coarse" | "exact" | "approximate";
+    };
+
+export type ParsedTemporalExpression = {
+  date?: DateExpression;
+  time?: TimeExpression;
+  recurrence?: {
+    frequency: "daily" | "weekly" | "monthly";
+    interval: number;
+    weekdays?: number[];
+  };
+  negative?: boolean;
+};

@@ -1,0 +1,66 @@
+{
+  "name": "fechero",
+  "version": "0.1.0",
+  "description": "Structured Spanish date parsing for scheduling engines.",
+  "homepage": "https://github.com/rodrigouroz/fechero#readme",
+  "keywords": [
+    "date-parser",
+    "dates",
+    "espanol",
+    "es-AR",
+    "nlp",
+    "scheduling",
+    "temporal"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "author": "Rodrigo Uroz",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rodrigouroz/fechero.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rodrigouroz/fechero/issues"
+  },
+  "packageManager": "pnpm@9.9.0",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "release:check": "pnpm typecheck && pnpm test && pnpm build && npm pack --dry-run",
+    "release:dry-run": "npm publish --dry-run --access public",
+    "release:publish": "pnpm publish --access public",
+    "prepublishOnly": "pnpm release:check"
+  },
+  "dependencies": {
+    "@js-temporal/polyfill": "^0.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}
