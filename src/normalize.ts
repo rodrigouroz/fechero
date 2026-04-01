@@ -39,6 +39,7 @@ const TEMPORAL_LEXICON = [
   "manana",
   "pasado",
   "proximo",
+  "proxima",
   "finde",
   "antes",
   "despues",

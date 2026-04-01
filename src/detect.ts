@@ -84,7 +84,13 @@ function detectDateExpression(
     return { kind: "week_after_next" };
   }
 
-  if (normalizedText.includes("la semana que viene")) {
+  if (
+    normalizedText.includes("la semana que viene") ||
+    normalizedText.includes("la proxima semana") ||
+    normalizedText.includes("la proximo semana") ||
+    normalizedText.includes("la semana proxima") ||
+    normalizedText.includes("la semana proximo")
+  ) {
     return { kind: "next_week" };
   }
 
@@ -101,7 +107,7 @@ function detectDateExpression(
   }
 
   const nextWeekWeekdayMatch = normalizedText.match(
-    new RegExp(`\\bel ${WEEKDAY_PATTERN} que viene\\b|\\bel ${WEEKDAY_PATTERN} proximo\\b`, "u")
+    new RegExp(`\\b(?:el\\s+)?${WEEKDAY_PATTERN} que viene\\b|\\b(?:el\\s+)?${WEEKDAY_PATTERN} proximo\\b`, "u")
   );
   if (nextWeekWeekdayMatch) {
     const weekdayName = nextWeekWeekdayMatch[1] ?? nextWeekWeekdayMatch[2];

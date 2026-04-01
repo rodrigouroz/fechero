@@ -39,6 +39,28 @@ describe("parseSpanishDate", () => {
     });
   });
 
+  it("parses la próxima semana as the next week", () => {
+    const result = parseSpanishDate("la próxima semana", context);
+
+    expect(result.errors).toEqual([]);
+    expect(result.candidates[0]).toMatchObject({
+      kind: "date_range",
+      dateFrom: "2026-04-06",
+      dateTo: "2026-04-12",
+    });
+  });
+
+  it("parses la semana próxima as the next week", () => {
+    const result = parseSpanishDate("la semana próxima", context);
+
+    expect(result.errors).toEqual([]);
+    expect(result.candidates[0]).toMatchObject({
+      kind: "date_range",
+      dateFrom: "2026-04-06",
+      dateTo: "2026-04-12",
+    });
+  });
+
   it("parses current week ranges like esta semana", () => {
     const result = parseSpanishDate("esta semana", context);
 
@@ -211,8 +233,32 @@ describe("parseSpanishDate", () => {
     ]);
   });
 
+  it("parses article-less next-week weekdays like martes que viene", () => {
+    const result = parseSpanishDate("martes que viene", context);
+
+    expect(result.errors).toEqual([]);
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        kind: "date",
+        exactDate: "2026-04-07",
+      }),
+    ]);
+  });
+
   it("parses postposed próximo weekdays like el jueves próximo", () => {
     const result = parseSpanishDate("el jueves próximo", context);
+
+    expect(result.errors).toEqual([]);
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        kind: "date",
+        exactDate: "2026-04-09",
+      }),
+    ]);
+  });
+
+  it("parses article-less postposed próximo weekdays like jueves próximo", () => {
+    const result = parseSpanishDate("jueves próximo", context);
 
     expect(result.errors).toEqual([]);
     expect(result.candidates).toEqual([
@@ -383,6 +429,24 @@ describe("parseSpanishDate", () => {
           label: "antes_de",
           precision: "coarse",
         },
+      }),
+    ]);
+  });
+
+  it("adds a warning when the weekday contradicts the absolute date", () => {
+    const result = parseSpanishDate("martes 9 de abril de 2026", context);
+
+    expect(result.errors).toEqual([]);
+    expect(result.warnings).toEqual([
+      {
+        code: "WEEKDAY_DATE_MISMATCH",
+        message: "The weekday does not match the absolute date.",
+      },
+    ]);
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        kind: "date",
+        exactDate: "2026-04-09",
       }),
     ]);
   });

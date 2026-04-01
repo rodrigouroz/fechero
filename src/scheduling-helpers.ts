@@ -1,18 +1,37 @@
 import { Temporal } from "@js-temporal/polyfill";
 
 import { resolveBestCandidate } from "./resolve";
-import type { ParseResult, TemporalCandidate, TimeRange } from "./types";
+import type { ParseResult, ParseWarning, TemporalCandidate, TimeRange } from "./types";
 
-type WeekdayConvention = "temporal" | "sunday-0";
+export type WeekdayConvention = "temporal" | "sunday-0";
 
-type HelperOptions = {
+export type HelperOptions = {
   weekdayConvention?: WeekdayConvention;
+  preserveAmbiguity?: boolean;
 };
 
-type SchedulingFilter = {
-  days_of_week?: number[];
-  time_from?: string;
-  time_to?: string;
+export type TemporalRule = {
+  weekdays?: number[];
+  timeFrom?: string;
+  timeTo?: string;
+};
+
+export type TemporalOutput = {
+  ambiguous: boolean;
+  ambiguityReason?: string;
+  exactDate?: string;
+  exactStartTime?: string;
+  isApproximate?: boolean;
+  dateFrom?: string;
+  dateTo?: string;
+  availabilityRules: TemporalRule[];
+  exclusionRules: TemporalRule[];
+  recurrence?: {
+    frequency: "daily" | "weekly" | "monthly";
+    interval: number;
+    weekdays?: number[];
+  };
+  warnings: ParseWarning[];
 };
 
 type TemporalConstraints = {
@@ -25,10 +44,6 @@ type TemporalConstraints = {
   allowedWeekdays?: number[];
   excludedWeekdays?: number[];
 };
-
-function asCandidate(input: ParseResult | TemporalCandidate): TemporalCandidate | null {
-  return "candidates" in input ? resolveBestCandidate(input) : input;
-}
 
 function convertWeekday(weekday: number, convention: WeekdayConvention): number {
   if (convention === "temporal") {
@@ -54,96 +69,209 @@ function candidateWeekdays(
   return undefined;
 }
 
-function timeRangeBounds(timeRange?: TimeRange) {
+function rangeRule(timeRange?: TimeRange): Pick<TemporalRule, "timeFrom" | "timeTo"> {
   if (!timeRange) {
     return {};
   }
 
   return {
-    time_from: timeRange.from,
-    time_to: timeRange.to,
+    timeFrom: timeRange.from,
+    timeTo: timeRange.to,
+  };
+}
+
+function buildAvailabilityRules(
+  candidate: TemporalCandidate,
+  options: { weekdayConvention: WeekdayConvention }
+): TemporalRule[] {
+  if (candidate.excludedWeekdays?.length) {
+    return [];
+  }
+
+  if (candidate.exactStartTime) {
+    return [];
+  }
+
+  if (!candidate.timeRange) {
+    return [];
+  }
+
+  const weekdays = candidate.exactDate ? undefined : candidateWeekdays(candidate, options.weekdayConvention);
+
+  return [
+    {
+      ...(weekdays ? { weekdays } : {}),
+      ...rangeRule(candidate.timeRange),
+    },
+  ];
+}
+
+function buildExclusionRules(
+  candidate: TemporalCandidate,
+  options: { weekdayConvention: WeekdayConvention }
+): TemporalRule[] {
+  if (!candidate.excludedWeekdays?.length) {
+    return [];
+  }
+
+  return [
+    {
+      weekdays: candidate.excludedWeekdays.map((weekday) =>
+        convertWeekday(weekday, options.weekdayConvention)
+      ),
+      ...rangeRule(candidate.timeRange),
+    },
+  ];
+}
+
+function recurrenceForOutput(
+  candidate: TemporalCandidate,
+  convention: WeekdayConvention
+): TemporalOutput["recurrence"] {
+  if (!candidate.recurrence) {
+    return undefined;
+  }
+
+  return {
+    ...candidate.recurrence,
+    weekdays: candidate.recurrence.weekdays?.map((weekday) =>
+      convertWeekday(weekday, convention)
+    ),
+  };
+}
+
+function ambiguityReason(candidates: TemporalCandidate[]): string | undefined {
+  if (candidates.length < 2) {
+    return undefined;
+  }
+
+  const reasons = new Set(candidates.map((candidate) => candidate.ambiguityReason).filter(Boolean));
+  if (reasons.size === 1) {
+    return [...reasons][0];
+  }
+
+  return "multiple_candidates";
+}
+
+function sharedField<T>(candidates: TemporalCandidate[], getValue: (candidate: TemporalCandidate) => T | undefined) {
+  const values = candidates.map(getValue);
+  const first = values[0];
+  if (first === undefined) {
+    return undefined;
+  }
+
+  return values.every((value) => JSON.stringify(value) === JSON.stringify(first)) ? first : undefined;
+}
+
+export function toTemporalOutput(
+  input: ParseResult,
+  options: HelperOptions = {}
+): TemporalOutput {
+  const weekdayConvention = options.weekdayConvention ?? "temporal";
+  const ambiguous = input.candidates.length > 1;
+  const preserveAmbiguity = options.preserveAmbiguity ?? true;
+
+  if (ambiguous && preserveAmbiguity) {
+    return {
+      ambiguous: true,
+      ambiguityReason: ambiguityReason(input.candidates),
+      exactDate: sharedField(input.candidates, (candidate) => candidate.exactDate),
+      exactStartTime: sharedField(input.candidates, (candidate) => candidate.exactStartTime),
+      isApproximate: sharedField(input.candidates, (candidate) => candidate.isApproximate),
+      dateFrom: sharedField(input.candidates, (candidate) => candidate.dateFrom),
+      dateTo: sharedField(input.candidates, (candidate) => candidate.dateTo),
+      availabilityRules: [],
+      exclusionRules: [],
+      recurrence: sharedField(input.candidates, (candidate) =>
+        recurrenceForOutput(candidate, weekdayConvention)
+      ),
+      warnings: input.warnings,
+    };
+  }
+
+  const candidate =
+    input.candidates.length === 0
+      ? null
+      : ambiguous
+        ? resolveBestCandidate(input)
+        : input.candidates[0];
+
+  if (!candidate) {
+    return {
+      ambiguous,
+      ambiguityReason: ambiguityReason(input.candidates),
+      availabilityRules: [],
+      exclusionRules: [],
+      warnings: input.warnings,
+    };
+  }
+
+  return {
+    ambiguous,
+    ambiguityReason: ambiguityReason(input.candidates),
+    ...(candidate.exactDate ? { exactDate: candidate.exactDate } : {}),
+    ...(candidate.exactStartTime ? { exactStartTime: candidate.exactStartTime } : {}),
+    ...(candidate.isApproximate !== undefined ? { isApproximate: candidate.isApproximate } : {}),
+    ...(candidate.dateFrom ? { dateFrom: candidate.dateFrom } : {}),
+    ...(candidate.dateTo ? { dateTo: candidate.dateTo } : {}),
+    availabilityRules: buildAvailabilityRules(candidate, { weekdayConvention }),
+    exclusionRules: buildExclusionRules(candidate, { weekdayConvention }),
+    ...(candidate.recurrence
+      ? {
+          recurrence: recurrenceForOutput(candidate, weekdayConvention),
+        }
+      : {}),
+    warnings: input.warnings,
   };
 }
 
 export function toAvailabilityFilters(
-  input: ParseResult | TemporalCandidate,
+  input: ParseResult,
   options: HelperOptions = {}
-): SchedulingFilter[] {
-  const candidate = asCandidate(input);
-  if (!candidate) {
-    return [];
-  }
-
-  const weekdayConvention = options.weekdayConvention ?? "temporal";
-  const daysOfWeek = candidateWeekdays(candidate, weekdayConvention);
-
-  if (!daysOfWeek && !candidate.timeRange) {
-    return [];
-  }
-
-  return [
-    {
-      ...(daysOfWeek ? { days_of_week: daysOfWeek } : {}),
-      ...timeRangeBounds(candidate.timeRange),
-    },
-  ];
+): Array<{ days_of_week?: number[]; time_from?: string; time_to?: string }> {
+  return toTemporalOutput(input, options).availabilityRules.map((rule) => ({
+    ...(rule.weekdays ? { days_of_week: rule.weekdays } : {}),
+    ...(rule.timeFrom ? { time_from: rule.timeFrom } : {}),
+    ...(rule.timeTo ? { time_to: rule.timeTo } : {}),
+  }));
 }
 
 export function toExclusionFilters(
-  input: ParseResult | TemporalCandidate,
+  input: ParseResult,
   options: HelperOptions = {}
-): SchedulingFilter[] {
-  const candidate = asCandidate(input);
-  if (!candidate || !candidate.excludedWeekdays?.length) {
-    return [];
-  }
-
-  const weekdayConvention = options.weekdayConvention ?? "temporal";
-
-  return [
-    {
-      days_of_week: candidate.excludedWeekdays.map((weekday) =>
-        convertWeekday(weekday, weekdayConvention)
-      ),
-      ...timeRangeBounds(candidate.timeRange),
-    },
-  ];
+): Array<{ days_of_week?: number[]; time_from?: string; time_to?: string }> {
+  return toTemporalOutput(input, options).exclusionRules.map((rule) => ({
+    ...(rule.weekdays ? { days_of_week: rule.weekdays } : {}),
+    ...(rule.timeFrom ? { time_from: rule.timeFrom } : {}),
+    ...(rule.timeTo ? { time_to: rule.timeTo } : {}),
+  }));
 }
 
 export function toTemporalConstraints(
-  input: ParseResult | TemporalCandidate,
+  input: ParseResult,
   options: HelperOptions = {}
 ): TemporalConstraints {
-  const candidate = asCandidate(input);
-  if (!candidate) {
-    return {};
-  }
-
-  const weekdayConvention = options.weekdayConvention ?? "temporal";
+  const output = toTemporalOutput(input, options);
 
   return {
-    ...(candidate.exactDate ? { exactDate: candidate.exactDate } : {}),
-    ...(candidate.exactStartTime ? { exactStartTime: candidate.exactStartTime } : {}),
-    ...(candidate.timeRange
+    ...(output.exactDate ? { exactDate: output.exactDate } : {}),
+    ...(output.exactStartTime ? { exactStartTime: output.exactStartTime } : {}),
+    ...(output.availabilityRules[0]?.timeFrom && output.availabilityRules[0]?.timeTo
       ? {
           preferredTimeRange: {
-            from: candidate.timeRange.from,
-            to: candidate.timeRange.to,
+            from: output.availabilityRules[0].timeFrom,
+            to: output.availabilityRules[0].timeTo,
           },
         }
       : {}),
-    ...(candidate.allowedWeekdays?.length
+    ...(output.availabilityRules[0]?.weekdays
       ? {
-          allowedWeekdays: candidate.allowedWeekdays.map((weekday) =>
-            convertWeekday(weekday, weekdayConvention)
-          ),
+          allowedWeekdays: output.availabilityRules[0].weekdays,
         }
       : {}),
-    ...(candidate.excludedWeekdays?.length
+    ...(output.exclusionRules[0]?.weekdays
       ? {
-          excludedWeekdays: candidate.excludedWeekdays.map((weekday) =>
-            convertWeekday(weekday, weekdayConvention)
-          ),
+          excludedWeekdays: output.exclusionRules[0].weekdays,
         }
       : {}),
   };

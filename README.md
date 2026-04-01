@@ -42,9 +42,7 @@ console.log(resolveBestCandidate(parsed));
 ```ts
 import {
   parseSpanishDate,
-  toAvailabilityFilters,
-  toExclusionFilters,
-  toTemporalConstraints,
+  toTemporalOutput,
 } from "fechero";
 
 parseSpanishDate("los martes a la mañana no puedo", {
@@ -73,9 +71,10 @@ const parsed = parseSpanishDate("este jueves a la tarde", {
   locale: "es",
 });
 
-toAvailabilityFilters(parsed, { weekdayConvention: "sunday-0" });
-toExclusionFilters(parsed, { weekdayConvention: "sunday-0" });
-toTemporalConstraints(parsed, { weekdayConvention: "sunday-0" });
+toTemporalOutput(parsed, {
+  weekdayConvention: "sunday-0",
+  preserveAmbiguity: true,
+});
 ```
 
 ## Result shape
@@ -101,9 +100,11 @@ Candidate metadata currently exposed:
 - `exactStartTime`
 - `isApproximate`
 - `sourceSpans`
+- `warnings`
 
 Scheduling helpers:
 
+- `toTemporalOutput()`
 - `toAvailabilityFilters()`
 - `toExclusionFilters()`
 - `toTemporalConstraints()`
@@ -115,6 +116,7 @@ Scheduling helpers:
 - Ambiguous expressions stay ambiguous in the output.
 - A separate resolver helper is available when a consumer wants a single best candidate.
 - Weekday output conventions can be adapted in helpers, including `sunday-0` for common scheduling systems.
+- Absolute date + weekday contradictions emit `WEEKDAY_DATE_MISMATCH`.
 
 ## Current limits
 

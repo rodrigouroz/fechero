@@ -3,6 +3,7 @@ export { resolveBestCandidate } from "./resolve";
 export {
   toAvailabilityFilters,
   toExclusionFilters,
+  toTemporalOutput,
   toTemporalConstraints,
 } from "./scheduling-helpers";
 export type {
@@ -15,3 +16,9 @@ export type {
   TemporalCandidate,
   TimeRange,
 } from "./types";
+export type {
+  HelperOptions,
+  TemporalOutput,
+  TemporalRule,
+  WeekdayConvention,
+} from "./scheduling-helpers";
