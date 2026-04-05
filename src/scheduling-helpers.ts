@@ -40,10 +40,12 @@ export type TemporalOutput = {
   availabilityRules: TemporalRule[];
   exclusionRules: TemporalRule[];
   recurrence?: {
-    frequency: "daily" | "weekly" | "monthly";
+    frequency: "daily" | "weekly" | "monthly" | "yearly";
     interval: number;
     weekdays?: number[];
+    until?: string;
   };
+  durationMinutes?: number;
   selectionHints: SelectionHints;
   sourceSpans: SourceSpan[];
   warnings: ParseWarning[];
@@ -160,9 +162,7 @@ function recurrenceForOutput(
 
   return {
     ...candidate.recurrence,
-    weekdays: candidate.recurrence.weekdays?.map((weekday) =>
-      convertWeekday(weekday, convention)
-    ),
+    weekdays: candidate.recurrence.weekdays?.map((weekday) => convertWeekday(weekday, convention)),
   };
 }
 
@@ -171,14 +171,37 @@ function ambiguityReason(candidates: TemporalCandidate[]): string | undefined {
     return undefined;
   }
 
-  const reasons = new Set(
-    candidates.map((candidate) => candidate.ambiguityReason).filter(Boolean)
-  );
+  const reasons = new Set(candidates.map((candidate) => candidate.ambiguityReason).filter(Boolean));
   if (reasons.size === 1) {
     return [...reasons][0];
   }
 
   return "multiple_candidates";
+}
+
+function deepEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (left === null || right === null) return false;
+  if (typeof left !== typeof right) return false;
+  if (typeof left !== "object") return false;
+  if (Array.isArray(left)) {
+    if (!Array.isArray(right) || left.length !== right.length) return false;
+    for (let index = 0; index < left.length; index += 1) {
+      if (!deepEqual(left[index], right[index])) return false;
+    }
+    return true;
+  }
+  if (Array.isArray(right)) return false;
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  if (leftKeys.length !== rightKeys.length) return false;
+  for (const key of leftKeys) {
+    if (!Object.prototype.hasOwnProperty.call(rightRecord, key)) return false;
+    if (!deepEqual(leftRecord[key], rightRecord[key])) return false;
+  }
+  return true;
 }
 
 function sharedField<T>(
@@ -191,26 +214,20 @@ function sharedField<T>(
     return undefined;
   }
 
-  return values.every((value) => JSON.stringify(value) === JSON.stringify(first))
-    ? first
-    : undefined;
+  return values.every((value) => deepEqual(value, first)) ? first : undefined;
 }
 
 function mergeSelectionHints(candidates: TemporalCandidate[]): SelectionHints {
-  return candidates.reduce(
-    (accumulator, candidate) => {
-      const hints = candidate.selectionHints ?? defaultSelectionHints();
+  return candidates.reduce((accumulator, candidate) => {
+    const hints = candidate.selectionHints ?? defaultSelectionHints();
 
-      return {
-        mentionsExactDate: accumulator.mentionsExactDate || hints.mentionsExactDate,
-        mentionsExactTime: accumulator.mentionsExactTime || hints.mentionsExactTime,
-        mentionsRelativeWeekday:
-          accumulator.mentionsRelativeWeekday || hints.mentionsRelativeWeekday,
-        mentionsRange: accumulator.mentionsRange || hints.mentionsRange,
-      };
-    },
-    defaultSelectionHints()
-  );
+    return {
+      mentionsExactDate: accumulator.mentionsExactDate || hints.mentionsExactDate,
+      mentionsExactTime: accumulator.mentionsExactTime || hints.mentionsExactTime,
+      mentionsRelativeWeekday: accumulator.mentionsRelativeWeekday || hints.mentionsRelativeWeekday,
+      mentionsRange: accumulator.mentionsRange || hints.mentionsRange,
+    };
+  }, defaultSelectionHints());
 }
 
 function mergeSourceSpans(candidates: TemporalCandidate[]): SourceSpan[] {
@@ -261,10 +278,16 @@ function outputFromCandidate(
   };
 }
 
-export function toTemporalOutput(
-  input: ParseResult,
-  options: HelperOptions = {}
-): TemporalOutput {
+/**
+ * Convert a {@link ParseResult} into a flat, scheduler-friendly
+ * {@link TemporalOutput} shape.
+ *
+ * By default ambiguity is preserved: when the result has multiple candidates,
+ * `ambiguous: true` is returned and only fields shared across every candidate
+ * are populated. Pass `preserveAmbiguity: false` to collapse using
+ * {@link resolveBestCandidate}.
+ */
+export function toTemporalOutput(input: ParseResult, options: HelperOptions = {}): TemporalOutput {
   const weekdayConvention = options.weekdayConvention ?? "temporal";
   const ambiguous = input.candidates.length > 1;
   const preserveAmbiguity = options.preserveAmbiguity ?? true;
@@ -276,7 +299,10 @@ export function toTemporalOutput(
       exactDate: sharedField(input.candidates, (candidate) => candidate.exactDate),
       exactDateSource: sharedField(input.candidates, (candidate) => candidate.exactDateSource),
       exactStartTime: sharedField(input.candidates, (candidate) => candidate.exactStartTime),
-      exactStartTimeSource: sharedField(input.candidates, (candidate) => candidate.exactStartTimeSource),
+      exactStartTimeSource: sharedField(
+        input.candidates,
+        (candidate) => candidate.exactStartTimeSource
+      ),
       isApproximate: sharedField(input.candidates, (candidate) => candidate.isApproximate),
       dateFrom: sharedField(input.candidates, (candidate) => candidate.dateFrom),
       dateTo: sharedField(input.candidates, (candidate) => candidate.dateTo),
@@ -314,6 +340,11 @@ export function toTemporalOutput(
   return outputFromCandidate(candidate, input, weekdayConvention);
 }
 
+/**
+ * Extract only the positive availability rules (allowed weekdays × time
+ * windows) from a {@link ParseResult}, shaped for systems that use
+ * `days_of_week` / `time_from` / `time_to` columns.
+ */
 export function toAvailabilityFilters(
   input: ParseResult,
   options: HelperOptions = {}
@@ -325,6 +356,10 @@ export function toAvailabilityFilters(
   }));
 }
 
+/**
+ * Extract only the exclusion rules (excluded weekdays × time windows) from a
+ * {@link ParseResult}.
+ */
 export function toExclusionFilters(
   input: ParseResult,
   options: HelperOptions = {}
@@ -336,6 +371,11 @@ export function toExclusionFilters(
   }));
 }
 
+/**
+ * Extract a compact, opinionated set of scheduler constraints from a
+ * {@link ParseResult}. This is the narrowest helper — consumers that want
+ * full fidelity should use {@link toTemporalOutput}.
+ */
 export function toTemporalConstraints(
   input: ParseResult,
   options: HelperOptions = {}

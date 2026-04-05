@@ -40,10 +40,7 @@ console.log(resolveBestCandidate(parsed));
 ```
 
 ```ts
-import {
-  parseSpanishDate,
-  toTemporalOutput,
-} from "fechero";
+import { parseSpanishDate, toTemporalOutput } from "fechero";
 
 parseSpanishDate("los martes a la mañana no puedo", {
   referenceDateTime: "2026-03-31T10:00:00-03:00",
