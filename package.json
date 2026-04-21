@@ -1,6 +1,6 @@
 {
   "name": "fechero",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Structured Spanish date parsing for scheduling engines.",
   "homepage": "https://github.com/rodrigouroz/fechero#readme",
   "keywords": [
