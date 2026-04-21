@@ -8,6 +8,12 @@ const context = {
   locale: "es" as const,
 };
 
+function out(input: string) {
+  return toTemporalOutput(parseSpanishDate(input, context), {
+    weekdayConvention: "sunday-0",
+  });
+}
+
 describe("toTemporalOutput", () => {
   it("maps tomorrow into an exact date output", () => {
     const parsed = parseSpanishDate("mañana", context);
@@ -273,6 +279,35 @@ describe("toTemporalOutput", () => {
         expect.objectContaining({ text: "la semana que viene" }),
         expect.objectContaining({ text: "por la tarde" }),
       ]),
+    });
+  });
+
+  it("keeps 'después de' as a lower-bound filter and intersects meridiem buckets", () => {
+    const afterTwoInAfternoon = out("después de las dos de la tarde");
+    expect(afterTwoInAfternoon.exactStartTime).toBeUndefined();
+    expect(afterTwoInAfternoon).toMatchObject({
+      availabilityRules: [{ timeFrom: "14:00", timeTo: "19:00" }],
+    });
+
+    const afterFourteen = out("después de las 14");
+    expect(afterFourteen.exactStartTime).toBeUndefined();
+    expect(afterFourteen).toMatchObject({
+      availabilityRules: [{ timeFrom: "14:00", timeTo: "23:59" }],
+    });
+
+    const startingFromFourteen = out("a partir de las 14");
+    expect(startingFromFourteen.exactStartTime).toBeUndefined();
+    expect(startingFromFourteen).toMatchObject({
+      availabilityRules: [{ timeFrom: "14:00", timeTo: "23:59" }],
+    });
+  });
+
+  it("preserves weekday lists when combined with open-ended afternoon filters", () => {
+    const output = out("lunes o viernes después de las dos de la tarde");
+
+    expect(output.exactDate).toBeUndefined();
+    expect(output).toMatchObject({
+      availabilityRules: [{ weekdays: [1, 5], timeFrom: "14:00", timeTo: "19:00" }],
     });
   });
 });

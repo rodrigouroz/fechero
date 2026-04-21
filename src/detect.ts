@@ -57,10 +57,44 @@ const ORDINAL_BY_NAME: Record<string, number> = {
   ultima: -1,
 };
 
+const HOUR_BY_NAME: Record<string, number> = {
+  cero: 0,
+  un: 1,
+  una: 1,
+  uno: 1,
+  dos: 2,
+  tres: 3,
+  cuatro: 4,
+  cinco: 5,
+  seis: 6,
+  siete: 7,
+  ocho: 8,
+  nueve: 9,
+  diez: 10,
+  once: 11,
+  doce: 12,
+  trece: 13,
+  catorce: 14,
+  quince: 15,
+  dieciseis: 16,
+  diecisiete: 17,
+  dieciocho: 18,
+  diecinueve: 19,
+  veinte: 20,
+  veintiuna: 21,
+  veintiun: 21,
+  veintiuno: 21,
+  veintidos: 22,
+  veintitres: 23,
+};
+
 const WEEKDAY_PATTERN = "(domingo|lunes|martes|miercoles|jueves|viernes|sabado)";
 const MONTH_PATTERN =
   "(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)";
 const ORDINAL_PATTERN = "(primer|primero|segundo|tercer|tercero|cuarto|quinto|ultimo)";
+const HOUR_WORD_PATTERN =
+  "(cero|un|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete|dieciocho|diecinueve|veinte|veintiuna|veintiun|veintiuno|veintidos|veintitres)";
+const HOUR_TOKEN_PATTERN = `(?:\\d{1,2}|${HOUR_WORD_PATTERN})`;
 
 // ---------------------------------------------------------------------------
 // Module-level regex constants (compiled once).
@@ -115,7 +149,7 @@ const RE_WEEKDAY =
 const RE_WEEKDAY_RANGE = new RegExp(`\\bde ${WEEKDAY_PATTERN} a ${WEEKDAY_PATTERN}\\b`, "u");
 
 const RE_WEEKDAY_LIST = new RegExp(
-  `\\b${WEEKDAY_PATTERN}(?:, ${WEEKDAY_PATTERN})*(?: y ${WEEKDAY_PATTERN})\\b`,
+  `\\b${WEEKDAY_PATTERN}(?:(?:, | y | o )${WEEKDAY_PATTERN})+\\b`,
   "u"
 );
 
@@ -140,7 +174,10 @@ const RE_BETWEEN_TIME =
 const RE_RANGE_TIME =
   /\bde (?:las\s+)?(\d{1,2})(?::(\d{2}))? a (?:las\s+)?(\d{1,2})(?::(\d{2}))?\b/u;
 const RE_BEFORE_TIME = /\bantes de (?:las\s+)?(\d{1,2})(?::(\d{2}))?\b/u;
-const RE_AFTER_TIME = /\bdespues de (?:las\s+)?(\d{1,2})(?::(\d{2}))?\b/u;
+const RE_AFTER_TIME = new RegExp(
+  `\\b(?:despues de|a partir de) (?:las\\s+)?(?<hour>${HOUR_TOKEN_PATTERN})(?::(?<minute>\\d{2}))?\\b`,
+  "u"
+);
 
 const RE_HALF_PAST = /\b(?:a las\s+)?(?<h>\d{1,2}) y media\b/u;
 const RE_QUARTER_PAST = /\b(?:a las\s+)?(?<h>\d{1,2}) y cuarto\b/u;
@@ -156,7 +193,7 @@ const RE_DURATION_MINUTES = /\b(?:por|durante) (?<n>\d+) (?:minutos?|mins?)\b/u;
 const RE_DURATION_HALF_HOUR = /\b(?:por|durante) media hora\b/u;
 
 const RE_WEEKLY_RECURRENCE =
-  /\b(?<core>todos los (?<first>lunes|martes|miercoles|jueves|viernes|sabado|domingo))(?: y (?<second>lunes|martes|miercoles|jueves|viernes|sabado|domingo))?\b/u;
+  /\b(?<core>todos los (?<first>lunes|martes|miercoles|jueves|viernes|sabado|domingo))(?: (?:y|o) (?<second>lunes|martes|miercoles|jueves|viernes|sabado|domingo))?\b/u;
 const RE_DAILY_RECURRENCE = /\b(?<core>todos los dias|cada dia)\b/u;
 const RE_EVERY_N_WEEKS = /\bcada (?<n>\d+) semanas?\b/u;
 const RE_EVERY_N_DAYS = /\bcada (?<n>\d+) dias?\b/u;
@@ -238,6 +275,83 @@ function parseHour(
   return {
     value: `${String(hour).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`,
     hourAmbiguous,
+  };
+}
+
+function parseHourToken(
+  hourText: string,
+  minuteText = "00",
+  options?: { inferAfternoon?: boolean; context?: ParsedTemporalExpression["timeContext"] }
+): { value: string; hourAmbiguous: boolean } | undefined {
+  const numericHour = Number.parseInt(hourText, 10);
+  const resolvedHour =
+    Number.isNaN(numericHour) ? HOUR_BY_NAME[hourText.toLowerCase()] : numericHour;
+
+  if (resolvedHour === undefined) {
+    return undefined;
+  }
+
+  return parseHour(String(resolvedHour), minuteText, options);
+}
+
+function timeRangeForContext(
+  timeContext: ParsedTemporalExpression["timeContext"]
+): TimeExpression | undefined {
+  if (timeContext === "morning") {
+    return {
+      kind: "time_range",
+      from: "08:00",
+      to: "12:00",
+      label: "manana",
+      precision: "coarse",
+    };
+  }
+
+  if (timeContext === "afternoon") {
+    return {
+      kind: "time_range",
+      from: "13:00",
+      to: "19:00",
+      label: "tarde",
+      precision: "coarse",
+    };
+  }
+
+  if (timeContext === "night") {
+    return {
+      kind: "time_range",
+      from: "20:00",
+      to: "23:59",
+      label: "noche",
+      precision: "coarse",
+    };
+  }
+
+  return undefined;
+}
+
+function constrainAfterTimeRange(
+  from: string,
+  timeContext: ParsedTemporalExpression["timeContext"]
+): TimeExpression {
+  const bucket = timeRangeForContext(timeContext);
+
+  if (!bucket || bucket.kind !== "time_range" || from > bucket.to) {
+    return {
+      kind: "time_range",
+      from,
+      to: "23:59",
+      label: "despues_de",
+      precision: "coarse",
+    };
+  }
+
+  return {
+    kind: "time_range",
+    from: from > bucket.from ? from : bucket.from,
+    to: bucket.to,
+    label: "despues_de",
+    precision: "coarse",
   };
 }
 
@@ -729,19 +843,13 @@ function detectTimeExpression(
   }
 
   const afterHourMatch = normalizedText.match(RE_AFTER_TIME);
-  if (afterHourMatch) {
-    const from = parseHour(afterHourMatch[1], afterHourMatch[2] ?? "00", {
+  if (afterHourMatch?.groups?.hour) {
+    const from = parseHourToken(afterHourMatch.groups.hour, afterHourMatch.groups.minute ?? "00", {
       context: timeContext,
     });
     if (from) {
       return {
-        time: {
-          kind: "time_range",
-          from: from.value,
-          to: "23:59",
-          label: "despues_de",
-          precision: "coarse",
-        },
+        time: constrainAfterTimeRange(from.value, timeContext),
         spans: [toSourceSpan(normalizedText, afterHourMatch)],
       };
     }
@@ -886,41 +994,10 @@ function detectTimeExpression(
   }
 
   // No explicit time: fall back to emitting the context as a time_range.
-  if (timeContext === "morning") {
+  const coarseContextTime = timeRangeForContext(timeContext);
+  if (coarseContextTime) {
     return {
-      time: {
-        kind: "time_range",
-        from: "08:00",
-        to: "12:00",
-        label: "manana",
-        precision: "coarse",
-      },
-      spans: [],
-      timeContext,
-    };
-  }
-  if (timeContext === "afternoon") {
-    return {
-      time: {
-        kind: "time_range",
-        from: "13:00",
-        to: "19:00",
-        label: "tarde",
-        precision: "coarse",
-      },
-      spans: [],
-      timeContext,
-    };
-  }
-  if (timeContext === "night") {
-    return {
-      time: {
-        kind: "time_range",
-        from: "20:00",
-        to: "23:59",
-        label: "noche",
-        precision: "coarse",
-      },
+      time: coarseContextTime,
       spans: [],
       timeContext,
     };
