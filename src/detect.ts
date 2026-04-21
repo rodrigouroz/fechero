@@ -284,8 +284,9 @@ function parseHourToken(
   options?: { inferAfternoon?: boolean; context?: ParsedTemporalExpression["timeContext"] }
 ): { value: string; hourAmbiguous: boolean } | undefined {
   const numericHour = Number.parseInt(hourText, 10);
-  const resolvedHour =
-    Number.isNaN(numericHour) ? HOUR_BY_NAME[hourText.toLowerCase()] : numericHour;
+  const resolvedHour = Number.isNaN(numericHour)
+    ? HOUR_BY_NAME[hourText.toLowerCase()]
+    : numericHour;
 
   if (resolvedHour === undefined) {
     return undefined;
